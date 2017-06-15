@@ -1,5 +1,4 @@
 # Laboratory work nr. 1
-
 ### DeadLines (DLs)
 Group 1: March 8th, 01:00 GTM+2
 
