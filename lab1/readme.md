@@ -1,15 +1,4 @@
 # Laboratory work nr. 1
-### DeadLines (DLs)
-Group 1: March 8th, 01:00 GTM+2
-
-Group 2: March 22nd, 01:00 GTM+2
-
-### Grading system
-- 1 subproblem  - 6
-- 2 subproblems - 8
-- 3 subproblems - 10
-
-
 ## Problem description
 Aunt Marry is an old lady from Chișinău. She lives in the area near the Circus and everyday she needs to take the trolleybus in order to get to the city center. From there she can go further to the *Piața Centrală*, where she doesn't buy anything, rather she spends her time hearing the latest news in the city. 
 
