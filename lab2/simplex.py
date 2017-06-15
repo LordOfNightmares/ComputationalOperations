@@ -1,144 +1,257 @@
-from __future__ import division
-from numpy import *
-from pprint import pprint
+from fractions import Fraction
+from warnings import warn
 
-class Tabel:
-    def __init__(self, obj):
-        self.obj = [1] + obj
-        self.rows = []
-        self.cons = []
-        self.compare_symbol = [] #added
-        self.solution_dict = {"x"+str(i+1):0 for i in range(len(obj))}
-        self.max_result = None
-        self.star_list = []
-        set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
 
-    def add_constraint(self, expression, value, symbol):
-        self.rows.append([0] + expression)
-        self.cons.append(value)
-        self.compare_symbol.append(symbol)
+class Simplex(object):
+    def __init__(self, num_vars, constraints, objective_function):
 
-    def _pivot_column(self):
-        if self._star_check():
-            selected_row_index = self.star_list.index("*")
-            return self.rows[selected_row_index][1:-1].tolist().index( #find pivot colomn
-                max(self.rows[selected_row_index][1:-1])) + 1
+        self.num_vars = num_vars
+        self.constraints = constraints
+        self.objective = objective_function[0]
+        self.objective_function = objective_function[1]
+        self.coeff_matrix, self.r_rows, self.num_s_vars, self.num_r_vars = self.construct_matrix_from_constraints()
+        del self.constraints
+        self.basic_vars = [0 for i in range(len(self.coeff_matrix))]
+        self.phase1()
+        r_index = self.num_r_vars + self.num_s_vars
+
+        for i in self.basic_vars:
+            if i > r_index:
+                raise ValueError("Infeasible solution")
+
+        self.delete_r_vars()
+
+        if 'min' in self.objective.lower():
+            self.solution = self.objective_minimize()
+
         else:
-            low = 0
-            idx = 0
-            for i in range(1, len(self.obj)-1):
-                if self.obj[i] < low:
-                    low = self.obj[i]
-                    idx = i
-            if idx == 0: return -1
-            return idx
+            self.solution = self.objective_maximize()
+        self.optimize_val = self.coeff_matrix[0][-1]
 
-    def _pivot_row(self, col):
-        rhs = [self.rows[i][-1] for i in range(len(self.rows))]
-        lhs = [self.rows[i][col] for i in range(len(self.rows))]
-        ratio = []
-        for i in range(len(rhs)):
-            if lhs[i] <= 0:
-                ratio.append(99999999 * abs(max(rhs))) #creates big an artificial big number to be able to compare to
-                continue
-            ratio.append(rhs[i]/lhs[i])
-        return argmin(ratio) #for sure need to modify for thw star case
+    def construct_matrix_from_constraints(self):
+        num_s_vars = 0  
+        num_r_vars = 0 
+        for expression in self.constraints:
+            if '>=' in expression:
+                num_s_vars += 1
 
-    def display(self):
-        print('\n', around(matrix([self.obj] + self.rows),3))
+            elif '<=' in expression:
+                num_s_vars += 1
+                num_r_vars += 1
 
-    def _pivot(self, row, col): #this method modifies the table based on the pivot
-        e = self.rows[row][col] # e is the pivot
-        self.rows[row] /= e
-        for r in range(len(self.rows)):
-            if r == row: continue
-            self.rows[r] = self.rows[r] - self.rows[r][col]*self.rows[row]
-        self.obj = self.obj - self.obj[col]*self.rows[row]
+            elif '=' in expression:
+                num_r_vars += 1
+        total_vars = self.num_vars + num_s_vars + num_r_vars
 
-    def _check(self):
-        if min(self.obj[1:-1]) >= 0: return 1
-        return 0
+        coeff_matrix = [[Fraction("0/1") for i in range(total_vars+1)] for j in range(len(self.constraints)+1)]
+        s_index = self.num_vars
+        r_index = self.num_vars + num_s_vars
+        r_rows = [] 
+        for i in range(1, len(self.constraints)+1):
+            constraint = self.constraints[i-1].split(' ')
 
-    def _star_check(self):
-        if "*" in self.star_list:
-                return 1
-        return 0
+            for j in range(len(constraint)):
 
-    def _eliminate_star(self):
-        c = self._pivot_column()    #find pivot column
-        r = self._pivot_row(c)      #find pivot row
-        self._pivot(r,c)
-        print('\npivot column: %s\npivot row: %s'%(c+1,r+2))
-        self.display()
-        self.star_list[r] = ""
+                if '_' in constraint[j]:
+                    coeff, index = constraint[j].split('_')
+                    if constraint[j-1] is '-':
+                        coeff_matrix[i][int(index)-1] = Fraction("-" + coeff[:-1] + "/1")
+                    else:
+                        coeff_matrix[i][int(index)-1] = Fraction(coeff[:-1] + "/1")
 
-    def _extract_solutions(self):
-        for i in range(1,len(matrix(self.rows).tolist()[0])): #i represents matrix colomn
-            counter1 = 0
-            counter2 = 0
-            for j in range(len(matrix(self.rows).tolist())):  #j represents matrix row
-                if matrix(self.rows).tolist()[j][i] == 1:
-                    counter1 += 1
-                elif matrix(self.rows).tolist()[j][i] == 0:
-                    counter2 += 1
-            if counter1 == 1 and counter2 == len(matrix(self.rows).tolist())-1:
-                if "x"+str(i) in self.solution_dict.keys():
-                    for l in range(len(matrix(self.rows).tolist())):
-                        if matrix(self.rows).tolist()[l][i] == 1:
-                            self.solution_dict["x"+str(i)] = around(matrix(self.rows),3).tolist()[l][-1]
-        self.max_result = self.obj[len(self.obj) - 1]
+                elif constraint[j] == '<=':
+                    coeff_matrix[i][s_index] = Fraction("1/1") 
+                    s_index += 1
 
-    def solve(self):
-        # build full table
-        for i in range(len(self.rows)):
-            self.obj += [0]
-            ident = [0 for r in range(len(self.rows))]
-            if(self.compare_symbol[i] == "<="):
-                ident[i] = 1
-                self.star_list.append("")
-            elif(self.compare_symbol[i] == ">="):
-                ident[i] = -1
-                self.star_list.append("*")
-            self.rows[i] += ident + [self.cons[i]]
-            self.rows[i] = array(self.rows[i], dtype=float)
-        self.obj = array(self.obj + [0], dtype=float)
+                elif constraint[j] == '>=':
+                    coeff_matrix[i][s_index] = Fraction("-1/1")  
+                    coeff_matrix[i][r_index] = Fraction("1/1")   
+                    s_index += 1
+                    r_index += 1
+                    r_rows.append(i)
 
-        # solve
-        self.display()
+                elif constraint[j] == '=':
+                    coeff_matrix[i][r_index] = Fraction("1/1")  
+                    r_index += 1
+                    r_rows.append(i)
 
-        #the star simplex solver
-        while self._star_check():
-            print(self.star_list)
-            c = self._pivot_column()    #find pivot column
-            r = self._pivot_row(c)      #find pivot row
-            self._pivot(r,c)
-            print('\npivot column: %s\npivot row: %s'%(c+1,r+2))
-            self.display()
-            self.star_list[r] = ""
+            coeff_matrix[i][-1] = Fraction(constraint[-1] + "/1")
 
-        #simple simplex
-        while not self._check():
-            c = self._pivot_column()    #find pivot column
-            r = self._pivot_row(c)      #find pivot row
-            self._pivot(r,c)
-            print('\npivot column: %s\npivot row: %s'%(c+1,r+2))
-            self.display()
+        return coeff_matrix, r_rows, num_s_vars, num_r_vars
 
-        self._extract_solutions()
+    def phase1(self):
 
-if __name__ == '__main__':
+        r_index = self.num_vars + self.num_s_vars
+        for i in range(r_index, len(self.coeff_matrix[0])-1):
+            self.coeff_matrix[0][i] = Fraction("-1/1")
+        coeff_0 = 0
+        for i in self.r_rows:
+            self.coeff_matrix[0] = add_row(self.coeff_matrix[0], self.coeff_matrix[i])
+            self.basic_vars[i] = r_index
+            r_index += 1
+        s_index = self.num_vars
+        for i in range(1, len(self.basic_vars)):
+            if self.basic_vars[i] == 0:
+                self.basic_vars[i] = s_index
+                s_index += 1
 
-    """
-    max z = 2x + 3y + 2z
-    st
-    2x + y + z <= 4
-    x + 2y + z <= 7
-    z          <= 5
-    x,y,z >= 0
-    """
 
-    t = Tabel([-2,-3,-2])
-    t.add_constraint([2, 1, 1], 4, "<=")
-    t.add_constraint([1, 2, 1], 7, "<=")
-    t.add_constraint([0, 0, 1], 5, "<=")
-    t.solve()
+        key_column = max_index(self.coeff_matrix[0])
+        condition = self.coeff_matrix[0][key_column] > 0
+
+        while condition is True:
+
+            key_row = self.find_key_row(key_column = key_column)
+            self.basic_vars[key_row] = key_column
+            pivot = self.coeff_matrix[key_row][key_column]
+            self.normalize_to_pivot(key_row, pivot)
+            self.make_key_column_zero(key_column, key_row)
+
+            key_column = max_index(self.coeff_matrix[0])
+            condition = self.coeff_matrix[0][key_column] > 0
+
+    def find_key_row(self, key_column):
+        min_val = float("inf")
+        min_i = 0
+        for i in range(1, len(self.coeff_matrix)):
+            if self.coeff_matrix[i][key_column] > 0:
+                val = self.coeff_matrix[i][-1] / self.coeff_matrix[i][key_column]
+                if val <  min_val:
+                    min_val = val
+                    min_i = i
+        if min_val == float("inf"):
+            raise ValueError("Unbounded solution")
+        if min_val == 0:
+            warn("Dengeneracy")
+        return min_i
+
+    def normalize_to_pivot(self, key_row, pivot):
+        for i in range(len(self.coeff_matrix[0])):
+            self.coeff_matrix[key_row][i] /= pivot
+
+    def make_key_column_zero(self, key_column, key_row):
+        num_columns = len(self.coeff_matrix[0])
+        for i in range(len(self.coeff_matrix)):
+            if i != key_row:
+                factor = self.coeff_matrix[i][key_column]
+                for j in range(num_columns):
+                    self.coeff_matrix[i][j] -= self.coeff_matrix[key_row][j] * factor
+
+    def delete_r_vars(self):
+        for i in range(len(self.coeff_matrix)):
+            non_r_length = self.num_vars + self.num_s_vars + 1
+            length = len(self.coeff_matrix[i])
+            while length != non_r_length:
+                del self.coeff_matrix[i][non_r_length-1]
+                length -= 1
+
+    def update_objective_function(self):
+        objective_function_coeffs = self.objective_function.split()
+        for i in range(len(objective_function_coeffs)):
+            if '_' in objective_function_coeffs[i]:
+                coeff, index = objective_function_coeffs[i].split('_')
+                if objective_function_coeffs[i-1] is '-':
+                    self.coeff_matrix[0][int(index)-1] = Fraction(coeff[:-1] + "/1")
+                else:
+                    self.coeff_matrix[0][int(index)-1] = Fraction("-" + coeff[:-1] + "/1")
+
+    def check_alternate_solution(self):
+        for i in range(len(self.coeff_matrix[0])):
+            if self.coeff_matrix[0][i] and i not in self.basic_vars[1:]:
+                warn("Alternate Solution exists")
+                break
+
+    def objective_minimize(self):
+        self.update_objective_function()
+
+        for row, column in enumerate(self.basic_vars[1:]):
+            if self.coeff_matrix[0][column] != 0:
+                self.coeff_matrix[0] = add_row(self.coeff_matrix[0], multiply_const_row(-self.coeff_matrix[0][column], self.coeff_matrix[row+1]))
+
+        key_column = max_index(self.coeff_matrix[0])
+        condition = self.coeff_matrix[0][key_column] > 0
+
+        while condition is True:
+
+            key_row = self.find_key_row(key_column = key_column)
+            self.basic_vars[key_row] = key_column
+            pivot = self.coeff_matrix[key_row][key_column]
+            self.normalize_to_pivot(key_row, pivot)
+            self.make_key_column_zero(key_column, key_row)
+
+            key_column = max_index(self.coeff_matrix[0])
+            condition = self.coeff_matrix[0][key_column] > 0
+
+        solution = {}
+        for i, var in enumerate(self.basic_vars[1:]):
+            if var < self.num_vars:
+                solution['x_'+str(var+1)] = self.coeff_matrix[i+1][-1]
+
+        for i in range(0, self.num_vars):
+            if i not in self.basic_vars[1:]:
+                solution['x_'+str(i+1)] = Fraction("0/1")
+        self.check_alternate_solution()
+        return solution
+
+    def objective_maximize(self):
+        self.update_objective_function()
+
+        for row, column in enumerate(self.basic_vars[1:]):
+            if self.coeff_matrix[0][column] != 0:
+                self.coeff_matrix[0] = add_row(self.coeff_matrix[0], multiply_const_row(-self.coeff_matrix[0][column], self.coeff_matrix[row+1]))
+
+        key_column = min_index(self.coeff_matrix[0])
+        condition = self.coeff_matrix[0][key_column] < 0
+
+        while condition is True:
+
+            key_row = self.find_key_row(key_column = key_column)
+            self.basic_vars[key_row] = key_column
+            pivot = self.coeff_matrix[key_row][key_column]
+            self.normalize_to_pivot(key_row, pivot)
+            self.make_key_column_zero(key_column, key_row)
+
+            key_column = min_index(self.coeff_matrix[0])
+            condition = self.coeff_matrix[0][key_column] < 0
+
+        solution = {}
+        for i, var in enumerate(self.basic_vars[1:]):
+            if var < self.num_vars:
+                solution['x_'+str(var+1)] = self.coeff_matrix[i+1][-1]
+
+        for i in range(0, self.num_vars):
+            if i not in self.basic_vars[1:]:
+                solution['x_'+str(i+1)] = Fraction("0/1")
+
+        self.check_alternate_solution()
+
+        return solution
+
+def add_row(row1, row2):
+    row_sum = [0 for i in range(len(row1))]
+    for i in range(len(row1)):
+        row_sum[i] = row1[i] + row2[i]
+    return row_sum
+
+def max_index(row):
+    max_i = 0
+    for i in range(0, len(row)-1):
+        if row[i] > row[max_i]:
+            max_i = i
+
+    return max_i
+
+def multiply_const_row(const, row):
+    mul_row = []
+    for i in row:
+        mul_row.append(const*i)
+    return mul_row
+
+def min_index(row):
+    min_i = 0
+    for i in range(0, len(row)):
+        if row[min_i] > row[i]:
+            min_i = i
+
+    return min_i
+
